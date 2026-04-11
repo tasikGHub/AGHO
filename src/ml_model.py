@@ -1,0 +1,129 @@
+"""
+MLForecast — Airport Ground Handling Optimizer
+Predicts service_time for each task using RandomForestRegressor.
+"""
+
+from datetime import datetime
+
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error
+from sklearn.model_selection import train_test_split
+
+
+def _log(level: str, message: str) -> None:
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] [MLForecast]    {level} — {message}")
+
+
+class MLForecast:
+    """Trains a RandomForestRegressor on synthetic task data and predicts service times."""
+
+    FEATURE_COLS = [
+        "task_type_enc",
+        "aircraft_type_enc",
+        "turnaround_min",
+        "hour_of_day",
+        "stand_id_enc",
+    ]
+
+    # Deterministic, fixed encodings
+    _TASK_TYPE_MAP = {"deicing": 0, "fueling": 1, "catering": 2}
+    _AIRCRAFT_TYPE_MAP = {"narrow": 0, "wide": 1}
+
+    def __init__(self, seed: int = 42):
+        self.seed = seed
+        self.model = RandomForestRegressor(n_estimators=100, random_state=seed)
+        self._stand_id_map: dict[str, int] = {}
+        self._fallback_mean: float | None = None
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def fit_predict(
+        self,
+        tasks_df: pd.DataFrame,
+        flights_df: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, float]:
+        """
+        Train on tasks_df and predict service_time_pred for all tasks.
+
+        Parameters
+        ----------
+        tasks_df : DataFrame with columns task_type, aircraft_type,
+                   turnaround_min, hour_of_day, stand_id, service_time_actual
+        flights_df : DataFrame (used for interface compatibility; relevant
+                     columns are already merged into tasks_df by DataGenerator)
+        seed : int  (set via __init__)
+
+        Returns
+        -------
+        tasks_df : original DataFrame + column service_time_pred (float)
+        mae      : mean absolute error on held-out 20% split (float)
+        """
+        if tasks_df.empty:
+            raise ValueError("tasks_df must not be empty")
+
+        df = tasks_df.copy()
+        y = df["service_time_actual"].values.astype(float)
+        self._fallback_mean = float(np.mean(y))
+
+        # Build stand_id encoding from sorted unique values (deterministic)
+        sorted_stands = sorted(df["stand_id"].unique())
+        self._stand_id_map = {s: i for i, s in enumerate(sorted_stands)}
+
+        try:
+            df_enc = self._encode_features(df)
+            X = df_enc[self.FEATURE_COLS].values.astype(float)
+
+            # Evaluate MAE on held-out 20%
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, random_state=self.seed
+            )
+            eval_model = RandomForestRegressor(n_estimators=100, random_state=self.seed)
+            eval_model.fit(X_train, y_train)
+            mae = float(mean_absolute_error(y_test, eval_model.predict(X_test)))
+
+            # Final model trained on all data
+            self.model.fit(X, y)
+            preds = self.model.predict(X).round(2)
+
+            _log("OK", f"MAE: {mae:.1f} min")
+
+        except Exception as exc:
+            # Fallback: predict mean for every task
+            fallback_arr = np.full(len(y), self._fallback_mean)
+            mae = float(mean_absolute_error(y, fallback_arr))
+            preds = fallback_arr
+            _log("WARN", f"training failed, fallback to mean (MAE: {mae:.1f} min) — {exc}")
+
+        result = tasks_df.copy()
+        result["service_time_pred"] = preds
+        return result, mae
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _encode_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        df["task_type_enc"] = df["task_type"].map(self._TASK_TYPE_MAP)
+        df["aircraft_type_enc"] = df["aircraft_type"].map(self._AIRCRAFT_TYPE_MAP)
+        df["stand_id_enc"] = df["stand_id"].map(self._stand_id_map).fillna(-1)
+        return df
+
+
+# ---------------------------------------------------------------------------
+# Convenience function used by pipeline.py
+# ---------------------------------------------------------------------------
+
+def run_ml_forecast(
+    tasks_df: pd.DataFrame,
+    flights_df: pd.DataFrame,
+    seed: int = 42,
+) -> tuple[pd.DataFrame, float]:
+    """Top-level function. Equivalent to MLForecast(seed).fit_predict(tasks_df, flights_df)."""
+    model = MLForecast(seed=seed)
+    return model.fit_predict(tasks_df, flights_df)
