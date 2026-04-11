@@ -1,0 +1,17 @@
+# Generated artifacts
+reports/
+data/
+
+# Claude / AI workflow
+CONTEXT.md
+plan.md
+pipeline.mermaid
+repo_structure.md
+pipeline-create.skill
+pipeline_create.md
+update-context.skill
+prompts/
+.claude/
+
+# Administrative
+project_tech_task.md

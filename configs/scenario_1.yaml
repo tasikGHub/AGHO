@@ -1,0 +1,89 @@
+# scenario_1.yaml — базовый сценарий
+# Все параметры проекта. Никаких хардкоженных чисел в коде.
+
+# -------------------------------------------------------------------
+# DataGenerator
+# -------------------------------------------------------------------
+data_generator:
+  n_flights: 42
+  n_stands: 10
+  time_window_hours: 8          # длина смены (часов)
+  start_time: "2026-04-13 06:00:00"
+
+  earliest_start_buffer_min: 15 # STA + буфер до начала обслуживания (мин)
+
+  # Распределение типов ВС
+  aircraft_types:
+    narrow: 0.7
+    wide: 0.3
+
+  # Задачи на рейс: какие типы генерировать
+  task_types:
+    - deicing
+    - fueling
+    - catering
+
+  # Базовое время обслуживания по задаче и типу ВС (мин) — до шума
+  service_time_base:
+    deicing:
+      narrow: 20
+      wide: 35
+    fueling:
+      narrow: 15
+      wide: 25
+    catering:
+      narrow: 10
+      wide: 20
+
+  service_time_noise_std: 3     # стандартное отклонение шума (мин)
+
+# -------------------------------------------------------------------
+# Парк ТС
+# -------------------------------------------------------------------
+vehicles:
+  - vehicle_type: deicing_truck
+    count: 2
+    speed_kmh: 20
+    capacity: 5000              # литры деайсинговой жидкости
+
+  - vehicle_type: fuel_truck
+    count: 3
+    speed_kmh: 25
+    capacity: 20000             # литры топлива
+
+  - vehicle_type: catering_truck
+    count: 3
+    speed_kmh: 30
+    capacity: 100               # порции
+
+# -------------------------------------------------------------------
+# Геометрия перрона (apron_graph)
+# -------------------------------------------------------------------
+apron:
+  depot_id: "DEPOT"
+  stand_prefix: "S"             # стоянки: S01, S02, ... S{n_stands}
+  grid_rows: 2
+  grid_cols: 5
+  stand_spacing_m: 80           # расстояние между соседними стоянками (м)
+  depot_to_first_stand_m: 50    # расстояние от депо до первой стоянки (м)
+
+# -------------------------------------------------------------------
+# Optimizer
+# -------------------------------------------------------------------
+optimizer:
+  priority_groups:
+    deicing: 1
+    fueling: 2
+    catering: 3
+
+  safe_interval_min: 2          # минимальный интервал между операциями у ВС (мин)
+  max_speed_kmh: 30             # ограничение скорости на перроне
+
+# -------------------------------------------------------------------
+# Metrics / Output
+# -------------------------------------------------------------------
+metrics:
+  reports_dir: "reports"
+  save_routes_gantt: true
+  save_load_chart: true
+  save_results_csv: true
