@@ -23,10 +23,11 @@ class MLForecast:
     FEATURE_COLS = [
         "task_type_enc",
         "aircraft_type_enc",
-        "turnaround_min",
         "hour_of_day",
         "stand_id_enc",
     ]
+
+    _RF_PARAMS = {"n_estimators": 100}
 
     # Deterministic, fixed encodings
     _TASK_TYPE_MAP = {"deicing": 0, "fueling": 1, "catering": 2}
@@ -34,7 +35,7 @@ class MLForecast:
 
     def __init__(self, seed: int = 42):
         self.seed = seed
-        self.model = RandomForestRegressor(n_estimators=100, random_state=seed)
+        self.model = RandomForestRegressor(**self._RF_PARAMS, random_state=seed)
         self._stand_id_map: dict[str, int] = {}
         self._fallback_mean: float | None = None
 
@@ -45,7 +46,6 @@ class MLForecast:
     def fit_predict(
         self,
         tasks_df: pd.DataFrame,
-        flights_df: pd.DataFrame,
     ) -> tuple[pd.DataFrame, float]:
         """
         Train on tasks_df and predict service_time_pred for all tasks.
@@ -53,9 +53,7 @@ class MLForecast:
         Parameters
         ----------
         tasks_df : DataFrame with columns task_type, aircraft_type,
-                   turnaround_min, hour_of_day, stand_id, service_time_actual
-        flights_df : DataFrame (used for interface compatibility; relevant
-                     columns are already merged into tasks_df by DataGenerator)
+                   hour_of_day, stand_id, service_time_actual
         seed : int  (set via __init__)
 
         Returns
@@ -82,13 +80,13 @@ class MLForecast:
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y, test_size=0.2, random_state=self.seed
             )
-            eval_model = RandomForestRegressor(n_estimators=100, random_state=self.seed)
+            eval_model = RandomForestRegressor(**self._RF_PARAMS, random_state=self.seed)
             eval_model.fit(X_train, y_train)
             mae = float(mean_absolute_error(y_test, eval_model.predict(X_test)))
 
             # Final model trained on all data
             self.model.fit(X, y)
-            preds = self.model.predict(X).round(2)
+            preds = np.clip(self.model.predict(X), 1.0, None).round(2)
 
             _log("OK", f"MAE: {mae:.1f} min")
 
@@ -96,7 +94,7 @@ class MLForecast:
             # Fallback: predict mean for every task
             fallback_arr = np.full(len(y), self._fallback_mean)
             mae = float(mean_absolute_error(y, fallback_arr))
-            preds = fallback_arr
+            preds = np.clip(fallback_arr, 1.0, None)
             _log("WARN", f"training failed, fallback to mean (MAE: {mae:.1f} min) — {exc}")
 
         result = tasks_df.copy()
@@ -109,8 +107,18 @@ class MLForecast:
 
     def _encode_features(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
+
+        unknown_tasks = set(df["task_type"].unique()) - set(self._TASK_TYPE_MAP)
+        if unknown_tasks:
+            raise ValueError(f"Unknown task_type values: {unknown_tasks}")
+
+        unknown_aircraft = set(df["aircraft_type"].unique()) - set(self._AIRCRAFT_TYPE_MAP)
+        if unknown_aircraft:
+            raise ValueError(f"Unknown aircraft_type values: {unknown_aircraft}")
+
         df["task_type_enc"] = df["task_type"].map(self._TASK_TYPE_MAP)
         df["aircraft_type_enc"] = df["aircraft_type"].map(self._AIRCRAFT_TYPE_MAP)
+        # Unknown stand_id → -1 (new stand not seen during fit is acceptable)
         df["stand_id_enc"] = df["stand_id"].map(self._stand_id_map).fillna(-1)
         return df
 
@@ -121,9 +129,8 @@ class MLForecast:
 
 def run_ml_forecast(
     tasks_df: pd.DataFrame,
-    flights_df: pd.DataFrame,
     seed: int = 42,
 ) -> tuple[pd.DataFrame, float]:
-    """Top-level function. Equivalent to MLForecast(seed).fit_predict(tasks_df, flights_df)."""
+    """Top-level function. Equivalent to MLForecast(seed).fit_predict(tasks_df)."""
     model = MLForecast(seed=seed)
-    return model.fit_predict(tasks_df, flights_df)
+    return model.fit_predict(tasks_df)

@@ -10,7 +10,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import numpy as np
 import pandas as pd
 import pytest
-from sklearn.ensemble import RandomForestRegressor
 
 from src.ml_model import MLForecast, run_ml_forecast
 
@@ -24,7 +23,6 @@ def _make_tasks_df(n: int = 30, seed: int = 0) -> pd.DataFrame:
     task_types = rng.choice(["deicing", "fueling", "catering"], size=n)
     aircraft_types = rng.choice(["narrow", "wide"], size=n)
     stand_ids = [f"S{i % 10 + 1:02d}" for i in range(n)]
-    turnaround = rng.integers(60, 120, size=n).astype(float)
     hour = rng.integers(6, 14, size=n).astype(float)
     svc_actual = rng.uniform(10, 40, size=n)
 
@@ -34,15 +32,9 @@ def _make_tasks_df(n: int = 30, seed: int = 0) -> pd.DataFrame:
         "task_type": task_types,
         "aircraft_type": aircraft_types,
         "stand_id": stand_ids,
-        "turnaround_min": turnaround,
         "hour_of_day": hour,
         "service_time_actual": svc_actual,
     })
-
-
-def _make_flights_df() -> pd.DataFrame:
-    """Minimal flights_df — columns already merged into tasks_df by DataGenerator."""
-    return pd.DataFrame(columns=["flight_id", "aircraft_type", "turnaround_min", "stand_id"])
 
 
 # ---------------------------------------------------------------------------
@@ -51,10 +43,9 @@ def _make_flights_df() -> pd.DataFrame:
 
 def test_determinism():
     tasks = _make_tasks_df(seed=0)
-    flights = _make_flights_df()
 
-    result1, mae1 = run_ml_forecast(tasks, flights, seed=42)
-    result2, mae2 = run_ml_forecast(tasks, flights, seed=42)
+    result1, mae1 = run_ml_forecast(tasks, seed=42)
+    result2, mae2 = run_ml_forecast(tasks, seed=42)
 
     pd.testing.assert_series_equal(
         result1["service_time_pred"].reset_index(drop=True),
@@ -70,9 +61,8 @@ def test_determinism():
 
 def test_output_correctness():
     tasks = _make_tasks_df(n=40, seed=1)
-    flights = _make_flights_df()
 
-    result, mae = run_ml_forecast(tasks, flights, seed=42)
+    result, mae = run_ml_forecast(tasks, seed=42)
 
     # Same number of rows
     assert len(result) == len(tasks)
@@ -98,7 +88,6 @@ def test_output_correctness():
 
 def test_fallback_on_training_failure():
     tasks = _make_tasks_df(n=20, seed=2)
-    flights = _make_flights_df()
 
     model = MLForecast(seed=42)
 
@@ -109,7 +98,7 @@ def test_fallback_on_training_failure():
 
     model.model = _BrokenRF()
 
-    result, mae = model.fit_predict(tasks, flights)
+    result, mae = model.fit_predict(tasks)
 
     expected_mean = tasks["service_time_actual"].mean()
 
@@ -131,9 +120,8 @@ def test_fallback_on_training_failure():
 def test_empty_tasks_raises():
     empty = pd.DataFrame(columns=[
         "task_id", "flight_id", "task_type", "aircraft_type",
-        "stand_id", "turnaround_min", "hour_of_day", "service_time_actual",
+        "stand_id", "hour_of_day", "service_time_actual",
     ])
-    flights = _make_flights_df()
 
     with pytest.raises(ValueError, match="must not be empty"):
-        run_ml_forecast(empty, flights, seed=42)
+        run_ml_forecast(empty, seed=42)
