@@ -100,6 +100,97 @@ class DataGenerator:
         vehicles_df = self._generate_vehicles()
         return flights_df, tasks_df, vehicles_df, apron_graph
 
+    def generate_history(self, n: int) -> pd.DataFrame:
+        """
+        Generate historical tasks for ML training only.
+
+        No apron graph or vehicles are built — just flights + tasks.
+        Uses seed+1 so historical data does not overlap with operational data.
+
+        Parameters
+        ----------
+        n : number of historical flights to generate
+
+        Returns
+        -------
+        tasks_df : DataFrame with the same columns as generate(), ready for ML training
+        """
+        if n < 1:
+            raise ValueError("n must be >= 1")
+
+        # Separate RNG — must not share state with the operational generator
+        hist_rng = np.random.default_rng(self.seed + 1)
+
+        dg = self.dg_cfg
+        start_dt = datetime.fromisoformat(dg["start_time"])
+        window_min = dg["time_window_hours"] * 60
+
+        # Derive stand_ids from config without building the full graph
+        n_stands = dg["n_stands"]
+        stand_prefix = self.cfg["apron"]["stand_prefix"]
+        stands = [f"{stand_prefix}{i:02d}" for i in range(1, n_stands + 1)]
+
+        aircraft_types = list(dg["aircraft_types"].keys())
+        aircraft_probs = [dg["aircraft_types"][t] for t in aircraft_types]
+        svc_base = dg["service_time_base"]
+        task_types = dg["task_types"]
+        noise_std = dg["service_time_noise_std"]
+        buffer_min = dg["earliest_start_buffer_min"]
+
+        # Generate flights
+        flight_rows = []
+        for i in range(1, n + 1):
+            ac_type = hist_rng.choice(aircraft_types, p=aircraft_probs)
+            sta_offset_min = hist_rng.integers(0, max(1, window_min - 90))
+            sta = start_dt + timedelta(minutes=int(sta_offset_min))
+            total_base = sum(svc_base[tt][ac_type] for tt in task_types)
+            turnaround_min = total_base + int(hist_rng.integers(20, 51))
+            std = sta + timedelta(minutes=turnaround_min)
+            stand_id = stands[(i - 1) % len(stands)]
+            flight_rows.append(
+                {
+                    "flight_id": f"HFL{i:05d}",
+                    "aircraft_type": ac_type,
+                    "STA": sta,
+                    "STD": std,
+                    "stand_id": stand_id,
+                    "turnaround_min": turnaround_min,
+                }
+            )
+
+        flights_df = pd.DataFrame(flight_rows)
+
+        # Generate tasks
+        task_rows = []
+        task_counter = 1
+        for _, flight in flights_df.iterrows():
+            ac_type = flight["aircraft_type"]
+            for tt in task_types:
+                base = svc_base[tt][ac_type]
+                noise = float(hist_rng.normal(0, noise_std))
+                service_time_actual = max(1.0, round(base + noise, 2))
+                earliest_start = flight["STA"] + timedelta(minutes=buffer_min)
+                task_rows.append(
+                    {
+                        "task_id": f"HT{task_counter:06d}",
+                        "flight_id": flight["flight_id"],
+                        "task_type": tt,
+                        "priority_group": self.TASK_TYPE_TO_PRIORITY[tt],
+                        "STA": flight["STA"],
+                        "STD": flight["STD"],
+                        "earliest_start": earliest_start,
+                        "vehicle_type_req": self.TASK_TYPE_TO_VEHICLE[tt],
+                        "service_time_actual": service_time_actual,
+                        "aircraft_type": ac_type,
+                        "stand_id": flight["stand_id"],
+                    }
+                )
+                task_counter += 1
+
+        tasks_df = pd.DataFrame(task_rows)
+        tasks_df["hour_of_day"] = tasks_df["STA"].dt.hour
+        return tasks_df
+
     # ------------------------------------------------------------------
     # Flights
     # ------------------------------------------------------------------

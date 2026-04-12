@@ -62,6 +62,12 @@ def _build_routes_df(
     if df.empty:
         return df
 
+    # Normalise field names: start_time/end_time → actual_start/actual_end
+    if "actual_start" not in df.columns and "start_time" in df.columns:
+        df = df.rename(columns={"start_time": "actual_start"})
+    if "actual_end" not in df.columns and "end_time" in df.columns:
+        df = df.rename(columns={"end_time": "actual_end"})
+
     # Merge with tasks_df to get priority_group, earliest_start, vehicle_type_req
     tasks_cols = [c for c in ["task_id", "priority_group", "earliest_start", "STD", "vehicle_type_req"]
                   if c in tasks_df.columns]
