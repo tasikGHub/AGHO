@@ -5,7 +5,8 @@
 # DataGenerator
 # -------------------------------------------------------------------
 data_generator:
-  n_flights: 42
+  n_flights: 50
+  ml_history_flights: 500
   n_stands: 10
   time_window_hours: 8          # длина смены (часов)
   start_time: "2026-04-13 06:00:00"

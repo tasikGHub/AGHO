@@ -48,54 +48,69 @@ class MLForecast:
     def fit_predict(
         self,
         tasks_df: pd.DataFrame,
+        history_df: pd.DataFrame | None = None,
     ) -> tuple[pd.DataFrame, float]:
         """
-        Train on tasks_df and predict service_time_pred for all tasks.
+        Train on history_df (if provided) or tasks_df, then predict on tasks_df.
 
         Parameters
         ----------
         tasks_df : DataFrame with columns task_type, aircraft_type,
                    hour_of_day, stand_id, service_time_actual
-        seed : int  (set via __init__)
+        history_df : optional historical DataFrame with same columns — used for
+                     training only; tasks_df is used exclusively for prediction.
+                     If None, training and prediction both use tasks_df.
 
         Returns
         -------
         tasks_df : original DataFrame + column service_time_pred (float)
-        mae      : mean absolute error on held-out 20% split (float)
+        mae      : mean absolute error on held-out 20% split of training data
         """
         if tasks_df.empty:
             raise ValueError("tasks_df must not be empty")
 
-        df = tasks_df.copy()
-        y = df["service_time_actual"].values.astype(float)
-        self._fallback_mean = float(np.mean(y))
+        train_df = history_df if history_df is not None else tasks_df
 
-        # Build stand_id encoding from sorted unique values (deterministic)
-        sorted_stands = sorted(df["stand_id"].unique())
-        self._stand_id_map = {s: i for i, s in enumerate(sorted_stands)}
+        if train_df.empty:
+            raise ValueError("history_df must not be empty when provided")
+
+        y_all = train_df["service_time_actual"].values.astype(float)
+        self._fallback_mean = float(np.mean(y_all))
+
+        # Build stand_id encoding from union of training + operational stands (deterministic)
+        all_stands = sorted(set(train_df["stand_id"].unique()) | set(tasks_df["stand_id"].unique()))
+        self._stand_id_map = {s: i for i, s in enumerate(all_stands)}
 
         try:
-            df_enc = self._encode_features(df)
-            X = df_enc[self.FEATURE_COLS].values.astype(float)
+            train_enc = self._encode_features(train_df)
+            X_all = train_enc[self.FEATURE_COLS].values.astype(float)
 
-            # Evaluate MAE on held-out split (test_size from config)
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=self._test_size, random_state=self.seed
+            # Evaluate MAE on held-out split of training data
+            X_tr, X_te, y_tr, y_te = train_test_split(
+                X_all, y_all, test_size=self._test_size, random_state=self.seed
             )
             eval_model = RandomForestRegressor(n_estimators=self._n_estimators, random_state=self.seed)
-            eval_model.fit(X_train, y_train)
-            mae = float(mean_absolute_error(y_test, eval_model.predict(X_test)))
+            eval_model.fit(X_tr, y_tr)
+            mae = float(mean_absolute_error(y_te, eval_model.predict(X_te)))
 
-            # Final model trained on all data
-            self.model.fit(X, y)
-            preds = np.clip(self.model.predict(X), 1.0, None).round(2)
+            # Final model trained on all training data
+            self.model.fit(X_all, y_all)
 
-            _log("OK", f"MAE: {mae:.1f} min")
+            # Predict on operational tasks
+            tasks_enc = self._encode_features(tasks_df)
+            X_pred = tasks_enc[self.FEATURE_COLS].values.astype(float)
+            preds = np.clip(self.model.predict(X_pred), 1.0, None).round(2)
+
+            if history_df is not None:
+                _log("OK", f"trained on {len(train_df)} historical tasks, MAE: {mae:.1f} min")
+            else:
+                _log("OK", f"MAE: {mae:.1f} min")
 
         except Exception as exc:
             # Fallback: predict mean for every task
-            fallback_arr = np.full(len(y), self._fallback_mean)
-            mae = float(mean_absolute_error(y, fallback_arr))
+            y_tasks = tasks_df["service_time_actual"].values.astype(float)
+            fallback_arr = np.full(len(y_tasks), self._fallback_mean)
+            mae = float(mean_absolute_error(y_tasks, fallback_arr))
             preds = np.clip(fallback_arr, 1.0, None)
             _log("WARN", f"training failed, fallback to mean (MAE: {mae:.1f} min) — {exc}")
 
@@ -133,7 +148,8 @@ def run_ml_forecast(
     tasks_df: pd.DataFrame,
     seed: int = 42,
     config: dict | None = None,
+    history_df: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, float]:
-    """Top-level function. Equivalent to MLForecast(seed, config).fit_predict(tasks_df)."""
+    """Top-level function. Equivalent to MLForecast(seed, config).fit_predict(tasks_df, history_df)."""
     model = MLForecast(seed=seed, config=config)
-    return model.fit_predict(tasks_df)
+    return model.fit_predict(tasks_df, history_df=history_df)

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from data_generator import generate_data
+from data_generator import DataGenerator, generate_data
 from ml_model import run_ml_forecast
 from optimizer import run_optimizer
 from simulator import run_simulation
@@ -96,10 +96,19 @@ def main() -> None:
         f" {n_stands} stands generated ({time.perf_counter() - t0:.2f}s)"
     )
 
+    # ── 1b. Historical data for ML training ───────────────────────────────────
+    n_history = config["data_generator"].get("ml_history_flights", 0)
+    history_df = None
+    if n_history > 0:
+        try:
+            history_df = DataGenerator(config, seed=args.seed + 1).generate_history(n_history)
+        except Exception as exc:
+            _log("DataGenerator", "WARN", f"history generation failed, ML will train on operational data — {exc}")
+
     # ── 2. MLForecast ─────────────────────────────────────────────────────────
     t0 = time.perf_counter()
     try:
-        tasks_df, mae = run_ml_forecast(tasks_df, seed=args.seed, config=config)
+        tasks_df, mae = run_ml_forecast(tasks_df, seed=args.seed, config=config, history_df=history_df)
     except Exception as exc:
         _log("MLForecast", "ERROR", f"{type(exc).__name__}: {exc}")
         sys.exit(1)
