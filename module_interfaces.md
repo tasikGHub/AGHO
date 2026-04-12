@@ -32,9 +32,9 @@
 ### Input
 | Параметр | Тип | Откуда |
 |----------|-----|--------|
-| `tasks_df` | `pd.DataFrame (task_id, task_type, aircraft_type, turnaround_min, hour_of_day, stand_id)` | ← `data_generator.py` |
-| `flights_df` | `pd.DataFrame (flight_id, aircraft_type, turnaround_min, stand_id)` | ← `data_generator.py` |
+| `tasks_df` | `pd.DataFrame (task_id, task_type, aircraft_type, hour_of_day, stand_id, service_time_actual)` | ← `data_generator.py` |
 | `seed` | `int` | CLI arg `--seed` |
+| `config` | `dict` | `scenario_1.yaml` |
 
 ### Output
 | Переменная | Тип | Куда |
