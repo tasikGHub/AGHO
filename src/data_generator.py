@@ -4,6 +4,7 @@ Generates synthetic flights, tasks, vehicles, and apron graph.
 """
 
 import math
+import warnings
 from datetime import datetime, timedelta
 
 import networkx as nx
@@ -39,6 +40,49 @@ class DataGenerator:
         self.dg_cfg = config["data_generator"]
         self.seed = seed
         self.rng = np.random.default_rng(seed)
+        self._validate_config()
+
+    # ------------------------------------------------------------------
+    # Config validation
+    # ------------------------------------------------------------------
+
+    def _validate_config(self) -> None:
+        dg = self.dg_cfg
+
+        # n_flights
+        if dg.get("n_flights", 0) < 1:
+            raise ValueError("n_flights must be >= 1")
+
+        # n_stands
+        if dg.get("n_stands", 0) < 1:
+            raise ValueError("n_stands must be >= 1")
+
+        # aircraft_probs must sum to 1.0
+        aircraft_types = dg.get("aircraft_types", {})
+        if aircraft_types:
+            total = sum(aircraft_types.values())
+            if not math.isclose(total, 1.0, abs_tol=1e-6):
+                raise ValueError(
+                    f"aircraft_types probabilities must sum to 1.0, got {total:.6f}"
+                )
+
+        # task_types must be known
+        unknown = set(dg.get("task_types", [])) - set(self.TASK_TYPE_TO_PRIORITY)
+        if unknown:
+            raise ValueError(
+                f"Unknown task_types in config: {unknown}. "
+                f"Supported: {set(self.TASK_TYPE_TO_PRIORITY)}"
+            )
+
+        # warn if time window is too narrow
+        window_min = dg.get("time_window_hours", 0) * 60
+        if window_min <= 90:
+            warnings.warn(
+                f"time_window_hours ({dg['time_window_hours']}h) leaves no room for STA "
+                "spread — all flights will get STA = start_time",
+                UserWarning,
+                stacklevel=3,
+            )
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -63,10 +107,6 @@ class DataGenerator:
     def _generate_flights(self, apron_graph: nx.Graph) -> pd.DataFrame:
         dg = self.dg_cfg
         n = dg["n_flights"]
-        n_stands = dg["n_stands"]
-
-        if n_stands < 1:
-            raise ValueError("n_stands must be >= 1")
 
         start_dt = datetime.fromisoformat(dg["start_time"])
         window_min = dg["time_window_hours"] * 60
@@ -81,7 +121,6 @@ class DataGenerator:
         aircraft_probs = [dg["aircraft_types"][t] for t in aircraft_types]
 
         svc_base = dg["service_time_base"]
-        noise_std = dg["service_time_noise_std"]
         task_types = dg["task_types"]
 
         rows = []
@@ -161,7 +200,9 @@ class DataGenerator:
 
         df = pd.DataFrame(rows)
         # Merge aircraft_type and stand_id from flights for ML features
-        flights_slim = flights_df[["flight_id", "aircraft_type", "turnaround_min", "stand_id"]]
+        # turnaround_min is intentionally excluded: it is derived from service times
+        # and would constitute data leakage for the ML model.
+        flights_slim = flights_df[["flight_id", "aircraft_type", "stand_id"]]
         df = df.merge(flights_slim, on="flight_id", how="left")
         df["hour_of_day"] = df["STA"].dt.hour
         return df
@@ -204,9 +245,6 @@ class DataGenerator:
     def _build_apron_graph(self) -> nx.Graph:
         apron_cfg = self.cfg["apron"]
         n_stands = self.dg_cfg["n_stands"]
-
-        if n_stands < 1:
-            raise ValueError("n_stands must be >= 1")
 
         rows = apron_cfg["grid_rows"]
         cols = apron_cfg["grid_cols"]
