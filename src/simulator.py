@@ -101,11 +101,7 @@ def run_simulation(
         {total_tasks, on_time, delayed, missed_window, overrun, violation_count}
     """
     if not assigned_routes:
-        return [], [], {
-            "total_tasks": 0, "on_time": 0, "delayed": 0,
-            "missed_window": 0, "overrun": 0,
-            "violation_count": 0, "cascade_count": 0,
-        }
+        raise ValueError("assigned_routes is empty — nothing to simulate")
 
     opt_cfg = config["optimizer"]
     safe_interval_min: float = float(opt_cfg["safe_interval_min"])
@@ -197,13 +193,13 @@ def run_simulation(
 
         # --- Status classification ---
         if actual_start >= std:
-            # Vehicle available only after STD — completely missed
-            status = "overrun"
-            sim_violations.append({"task_id": task_id, "reason": "overrun"})
-        elif actual_end > std:
-            # Started before STD but cannot finish in time
+            # Task started at or after STD — window completely missed
             status = "missed_window"
             sim_violations.append({"task_id": task_id, "reason": "missed_window"})
+        elif actual_end > std:
+            # Started in time but overruns STD
+            status = "overrun"
+            sim_violations.append({"task_id": task_id, "reason": "overrun"})
         elif actual_start > earliest_start:
             # Late arrival but task finishes before STD
             status = "delayed"
@@ -214,8 +210,8 @@ def run_simulation(
             "task_id": task_id,
             "vehicle_id": vehicle_id,
             "planned_start": planned_start,
-            "start_time": actual_start,
-            "end_time": actual_end,
+            "actual_start": actual_start,
+            "actual_end": actual_end,
             "delay_min": delay_min,
             "route": path,
             "status": status,
