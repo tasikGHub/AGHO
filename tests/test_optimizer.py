@@ -359,3 +359,16 @@ def test_disconnected_graph_raises():
 
     with pytest.raises(RuntimeError, match="not connected"):
         run_optimizer(_make_tasks_df(), _make_vehicles_df(), G, _make_config())
+
+
+def test_none_vehicles_raises():
+    with pytest.raises(ValueError, match="must not be empty"):
+        run_optimizer(_make_tasks_df(), None, _make_graph(), _make_config())
+
+
+def test_unknown_stand_id_raises():
+    tasks = _make_tasks_df().copy()
+    tasks.loc[0, "stand_id"] = "S99"   # not in _make_graph()
+
+    with pytest.raises(ValueError, match="stand_id"):
+        run_optimizer(tasks, _make_vehicles_df(), _make_graph(), _make_config())
