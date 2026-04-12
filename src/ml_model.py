@@ -27,15 +27,17 @@ class MLForecast:
         "stand_id_enc",
     ]
 
-    _RF_PARAMS = {"n_estimators": 100}
-
     # Deterministic, fixed encodings
     _TASK_TYPE_MAP = {"deicing": 0, "fueling": 1, "catering": 2}
     _AIRCRAFT_TYPE_MAP = {"narrow": 0, "wide": 1}
 
-    def __init__(self, seed: int = 42):
+    def __init__(self, seed: int = 42, config: dict | None = None):
+        ml_cfg = (config or {}).get("ml_model", {})
+        n_estimators = int(ml_cfg.get("n_estimators", 100))
         self.seed = seed
-        self.model = RandomForestRegressor(**self._RF_PARAMS, random_state=seed)
+        self._n_estimators = n_estimators
+        self._test_size = float(ml_cfg.get("test_size", 0.2))
+        self.model = RandomForestRegressor(n_estimators=n_estimators, random_state=seed)
         self._stand_id_map: dict[str, int] = {}
         self._fallback_mean: float | None = None
 
@@ -76,11 +78,11 @@ class MLForecast:
             df_enc = self._encode_features(df)
             X = df_enc[self.FEATURE_COLS].values.astype(float)
 
-            # Evaluate MAE on held-out 20%
+            # Evaluate MAE on held-out split (test_size from config)
             X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.2, random_state=self.seed
+                X, y, test_size=self._test_size, random_state=self.seed
             )
-            eval_model = RandomForestRegressor(**self._RF_PARAMS, random_state=self.seed)
+            eval_model = RandomForestRegressor(n_estimators=self._n_estimators, random_state=self.seed)
             eval_model.fit(X_train, y_train)
             mae = float(mean_absolute_error(y_test, eval_model.predict(X_test)))
 
@@ -130,7 +132,8 @@ class MLForecast:
 def run_ml_forecast(
     tasks_df: pd.DataFrame,
     seed: int = 42,
+    config: dict | None = None,
 ) -> tuple[pd.DataFrame, float]:
-    """Top-level function. Equivalent to MLForecast(seed).fit_predict(tasks_df)."""
-    model = MLForecast(seed=seed)
+    """Top-level function. Equivalent to MLForecast(seed, config).fit_predict(tasks_df)."""
+    model = MLForecast(seed=seed, config=config)
     return model.fit_predict(tasks_df)

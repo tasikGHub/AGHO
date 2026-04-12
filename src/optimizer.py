@@ -6,7 +6,6 @@ Greedy rule-based vehicle assignment and route planning.
 from datetime import datetime, timedelta
 
 import networkx as nx
-import numpy as np
 import pandas as pd
 
 

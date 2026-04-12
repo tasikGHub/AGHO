@@ -101,19 +101,11 @@ def run_simulation(
         {total_tasks, on_time, delayed, missed_window, overrun, violation_count}
     """
     if not assigned_routes:
-        _log("WARN", "assigned_routes is empty — nothing to simulate")
-        return [], [], {
-            "total_tasks": 0,
-            "on_time": 0,
-            "delayed": 0,
-            "missed_window": 0,
-            "overrun": 0,
-            "violation_count": 0,
-        }
+        raise ValueError("assigned_routes is empty — nothing to simulate")
 
-    opt_cfg = config.get("optimizer", {})
-    safe_interval_min: float = float(opt_cfg.get("safe_interval_min", 2))
-    max_speed_kmh: float = float(opt_cfg.get("max_speed_kmh", 30))
+    opt_cfg = config["optimizer"]
+    safe_interval_min: float = float(opt_cfg["safe_interval_min"])
+    max_speed_kmh: float = float(opt_cfg["max_speed_kmh"])
 
     # Index tasks by task_id for O(1) lookups
     tasks_index: dict[str, dict] = {
@@ -139,10 +131,12 @@ def run_simulation(
 
     executed_routes: list[dict] = []
     sim_violations: list[dict] = []
+    cascade_count: int = 0
 
     for entry in sorted_routes:
         task_id: str = entry["task_id"]
         vehicle_id: str = entry["vehicle_id"]
+        planned_start: datetime = entry["start_time"]   # optimizer's planned start
         planned_route: list = entry.get("route", [])
 
         # --- Lookup task info ---
@@ -190,19 +184,22 @@ def run_simulation(
         last_end = stand_last_end.get(stand_id)
         if last_end is not None:
             earliest_allowed = last_end + timedelta(minutes=safe_interval_min)
-            actual_start = max(actual_start, earliest_allowed)
+            if earliest_allowed > actual_start:
+                actual_start = earliest_allowed
+                cascade_count += 1
 
         actual_end: datetime = actual_start + timedelta(minutes=svc_time)
+        delay_min: float = max(0.0, (actual_start - planned_start).total_seconds() / 60.0)
 
         # --- Status classification ---
         if actual_start >= std:
-            # Vehicle arrives after departure — task completely missed
-            status = "overrun"
-            sim_violations.append({"task_id": task_id, "reason": "overrun_start_after_std"})
-        elif actual_end > std:
-            # Started in time but cannot finish before departure
+            # Task started at or after STD — window completely missed
             status = "missed_window"
             sim_violations.append({"task_id": task_id, "reason": "missed_window"})
+        elif actual_end > std:
+            # Started in time but overruns STD
+            status = "overrun"
+            sim_violations.append({"task_id": task_id, "reason": "overrun"})
         elif actual_start > earliest_start:
             # Late arrival but task finishes before STD
             status = "delayed"
@@ -212,8 +209,10 @@ def run_simulation(
         executed_routes.append({
             "task_id": task_id,
             "vehicle_id": vehicle_id,
-            "start_time": actual_start,
-            "end_time": actual_end,
+            "planned_start": planned_start,
+            "actual_start": actual_start,
+            "actual_end": actual_end,
+            "delay_min": delay_min,
             "route": path,
             "status": status,
         })
@@ -239,6 +238,7 @@ def run_simulation(
         "missed_window": status_counts["missed_window"],
         "overrun": status_counts["overrun"],
         "violation_count": len(sim_violations),
+        "cascade_count": cascade_count,
     }
 
     _log(
