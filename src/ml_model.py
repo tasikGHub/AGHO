@@ -93,6 +93,10 @@ class MLForecast:
             eval_model.fit(X_tr, y_tr)
             mae = float(mean_absolute_error(y_te, eval_model.predict(X_te)))
 
+            # Baseline MAE — predicting mean of training targets for all test samples
+            baseline_mae = float(mean_absolute_error(y_te, np.full(len(y_te), np.mean(y_tr))))
+            improvement = (baseline_mae - mae) / baseline_mae * 100 if baseline_mae > 0 else 0.0
+
             # Final model trained on all training data
             self.model.fit(X_all, y_all)
 
@@ -102,9 +106,18 @@ class MLForecast:
             preds = np.clip(self.model.predict(X_pred), 1.0, None).round(2)
 
             if history_df is not None:
-                _log("OK", f"trained on {len(train_df)} historical tasks, MAE: {mae:.1f} min")
+                _log("OK", (
+                    f"trained on {len(train_df)} historical tasks | "
+                    f"MAE (RF): {mae:.1f} min | "
+                    f"MAE (baseline): {baseline_mae:.1f} min | "
+                    f"Improvement: +{improvement:.0f}%"
+                ))
             else:
-                _log("OK", f"MAE: {mae:.1f} min")
+                _log("OK", (
+                    f"MAE (RF): {mae:.1f} min | "
+                    f"MAE (baseline): {baseline_mae:.1f} min | "
+                    f"Improvement: +{improvement:.0f}%"
+                ))
 
         except Exception as exc:
             # Fallback: predict mean for every task
@@ -125,31 +138,4 @@ class MLForecast:
     def _encode_features(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
 
-        unknown_tasks = set(df["task_type"].unique()) - set(self._TASK_TYPE_MAP)
-        if unknown_tasks:
-            raise ValueError(f"Unknown task_type values: {unknown_tasks}")
-
-        unknown_aircraft = set(df["aircraft_type"].unique()) - set(self._AIRCRAFT_TYPE_MAP)
-        if unknown_aircraft:
-            raise ValueError(f"Unknown aircraft_type values: {unknown_aircraft}")
-
-        df["task_type_enc"] = df["task_type"].map(self._TASK_TYPE_MAP)
-        df["aircraft_type_enc"] = df["aircraft_type"].map(self._AIRCRAFT_TYPE_MAP)
-        # Unknown stand_id → -1 (new stand not seen during fit is acceptable)
-        df["stand_id_enc"] = df["stand_id"].map(self._stand_id_map).fillna(-1)
-        return df
-
-
-# ---------------------------------------------------------------------------
-# Convenience function used by pipeline.py
-# ---------------------------------------------------------------------------
-
-def run_ml_forecast(
-    tasks_df: pd.DataFrame,
-    seed: int = 42,
-    config: dict | None = None,
-    history_df: pd.DataFrame | None = None,
-) -> tuple[pd.DataFrame, float]:
-    """Top-level function. Equivalent to MLForecast(seed, config).fit_predict(tasks_df, history_df)."""
-    model = MLForecast(seed=seed, config=config)
-    return model.fit_predict(tasks_df, history_df=history_df)
+        
