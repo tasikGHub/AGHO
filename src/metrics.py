@@ -299,7 +299,7 @@ def _print_summary(
     util = kpi_dict.get("vehicle_utilization", {})
     util_str = "  ".join(f"{v}={pct}%" for v, pct in sorted(util.items()))
 
-    sep = "─" * 44
+    sep = "-" * 44
     print(f"\n[Metrics] {sep}")
     print(f"  Assigned:       {n_executed} / {n_tasks} tasks  ({kpi_dict['assigned_rate'] * 100:.1f}%)")
     print(f"  On-time:        {n_on_time} / {n_executed} tasks  ({kpi_dict['on_time_rate'] * 100:.1f}%)")
