@@ -62,27 +62,18 @@ def _build_routes_df(
     if df.empty:
         return df
 
-    # Normalise column names
-    if "actual_start" not in df.columns and "start_time" in df.columns:
-        df = df.rename(columns={"start_time": "actual_start", "end_time": "actual_end"})
-
-    if "planned_start" not in df.columns:
-        df["planned_start"] = pd.NaT
-
     # Merge with tasks_df to get priority_group, earliest_start, vehicle_type_req
     tasks_cols = [c for c in ["task_id", "priority_group", "earliest_start", "STD", "vehicle_type_req"]
                   if c in tasks_df.columns]
     if tasks_cols:
         df = df.merge(tasks_df[tasks_cols], on="task_id", how="left")
 
-    # Fill planned_start from earliest_start if missing
-    if "earliest_start" in df.columns:
-        mask = df["planned_start"].isna() & df["earliest_start"].notna()
-        df.loc[mask, "planned_start"] = df.loc[mask, "earliest_start"]
-
-    # Compute delay_min if absent
+    # Compute delay_min if absent (fallback: from earliest_start)
     if "delay_min" not in df.columns:
-        if "earliest_start" in df.columns:
+        if "planned_start" in df.columns:
+            diff = (df["actual_start"] - df["planned_start"]).dt.total_seconds() / 60.0
+            df["delay_min"] = diff.clip(lower=0)
+        elif "earliest_start" in df.columns:
             diff = (df["actual_start"] - df["earliest_start"]).dt.total_seconds() / 60.0
             df["delay_min"] = diff.clip(lower=0)
         else:
@@ -378,10 +369,8 @@ def compute_and_report(
         raise ValueError("executed_routes is empty — nothing to report")
 
     metrics_cfg = config.get("metrics", {})
-    charts_dir: str = metrics_cfg.get("charts_dir", "charts")
     reports_dir: str = metrics_cfg.get("reports_dir", "reports")
 
-    os.makedirs(charts_dir, exist_ok=True)
     os.makedirs(reports_dir, exist_ok=True)
 
     routes_df = _build_routes_df(executed_routes, tasks_df)
@@ -389,12 +378,12 @@ def compute_and_report(
     kpi_dict = _compute_kpi(routes_df, sim_violations, sim_stats, tasks_df, config)
 
     if metrics_cfg.get("save_routes_gantt", True) and not routes_df.empty:
-        _save_gantt(routes_df, charts_dir)
+        _save_gantt(routes_df, reports_dir)
 
     vehicle_type_map = _vehicle_type_map(routes_df)
 
     if metrics_cfg.get("save_load_chart", True):
-        _save_load_chart(kpi_dict["vehicle_utilization"], vehicle_type_map, charts_dir)
+        _save_load_chart(kpi_dict["vehicle_utilization"], vehicle_type_map, reports_dir)
 
     if metrics_cfg.get("save_results_csv", True):
         _save_results_csv(kpi_dict, reports_dir)

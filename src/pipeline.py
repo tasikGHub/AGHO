@@ -6,9 +6,9 @@ No business logic here — only calls and structured logging.
 """
 
 import argparse
-import logging
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -22,17 +22,13 @@ from metrics import compute_and_report
 _REQUIRED_SECTIONS = ("data_generator", "vehicles", "apron", "optimizer", "metrics")
 
 
+def _log(module: str, level: str, message: str) -> None:
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] [{module}] {level} — {message}")
+
+
 def setup_logging() -> None:
-    """Configure root logger with [YYYY-MM-DD HH:MM:SS] [Module] format to stdout."""
-    fmt = "[%(asctime)s] [%(name)-15s] %(message)s"
-    datefmt = "%Y-%m-%d %H:%M:%S"
-    logging.basicConfig(
-        level=logging.INFO,
-        format=fmt,
-        datefmt=datefmt,
-        stream=sys.stdout,
-        force=True,
-    )
+    """No-op: all pipeline output uses structured print via _log()."""
 
 
 def load_config(config_path: str) -> dict:
@@ -77,82 +73,79 @@ def main() -> None:
     setup_logging()
     pipeline_start = time.perf_counter()
 
-    root_log = logging.getLogger("Pipeline")
-    root_log.info(f"START — config: {args.config}, seed: {args.seed}")
+    _log("Pipeline", "START", f"config: {args.config}, seed: {args.seed}")
 
     # ── Load config ───────────────────────────────────────────────────────────
     try:
         config = load_config(args.config)
     except (FileNotFoundError, KeyError) as exc:
-        root_log.error(f"ERROR — {type(exc).__name__}: {exc}")
+        _log("Pipeline", "ERROR", f"{type(exc).__name__}: {exc}")
         sys.exit(1)
 
     # ── 1. DataGenerator ──────────────────────────────────────────────────────
-    log = logging.getLogger("DataGenerator")
     t0 = time.perf_counter()
     try:
         flights_df, tasks_df, vehicles_df, apron_graph = generate_data(config, seed=args.seed)
     except Exception as exc:
-        log.error(f"ERROR — {type(exc).__name__}: {exc}")
+        _log("DataGenerator", "ERROR", f"{type(exc).__name__}: {exc}")
         sys.exit(1)
     n_stands = apron_graph.number_of_nodes() - 1  # exclude DEPOT node
-    log.info(
-        f"OK — {len(flights_df)} flights, {len(vehicles_df)} vehicles,"
+    _log(
+        "DataGenerator", "OK",
+        f"{len(flights_df)} flights, {len(vehicles_df)} vehicles,"
         f" {n_stands} stands generated ({time.perf_counter() - t0:.2f}s)"
     )
 
     # ── 2. MLForecast ─────────────────────────────────────────────────────────
-    log = logging.getLogger("MLForecast")
     t0 = time.perf_counter()
     try:
-        tasks_df, mae = run_ml_forecast(tasks_df, seed=args.seed)
+        tasks_df, mae = run_ml_forecast(tasks_df, seed=args.seed, config=config)
     except Exception as exc:
-        log.error(f"ERROR — {type(exc).__name__}: {exc}")
+        _log("MLForecast", "ERROR", f"{type(exc).__name__}: {exc}")
         sys.exit(1)
-    log.info(f"OK — MAE: {mae:.1f} min ({time.perf_counter() - t0:.2f}s)")
+    _log("MLForecast", "OK", f"MAE: {mae:.1f} min ({time.perf_counter() - t0:.2f}s)")
 
     # ── 3. Optimizer ──────────────────────────────────────────────────────────
-    log = logging.getLogger("Optimizer")
     t0 = time.perf_counter()
     try:
         assigned_routes, violations = run_optimizer(tasks_df, vehicles_df, apron_graph, config)
     except Exception as exc:
-        log.error(f"ERROR — {type(exc).__name__}: {exc}")
+        _log("Optimizer", "ERROR", f"{type(exc).__name__}: {exc}")
         sys.exit(1)
-    log.info(
-        f"OK — {len(assigned_routes)}/{len(tasks_df)} tasks assigned,"
+    _log(
+        "Optimizer", "OK",
+        f"{len(assigned_routes)}/{len(tasks_df)} tasks assigned,"
         f" {len(violations)} violations ({time.perf_counter() - t0:.2f}s)"
     )
 
     # ── 4. Simulator ──────────────────────────────────────────────────────────
-    log = logging.getLogger("Simulator")
     t0 = time.perf_counter()
     try:
         executed_routes, sim_violations, sim_stats = run_simulation(
             assigned_routes, tasks_df, vehicles_df, apron_graph, config
         )
     except Exception as exc:
-        log.error(f"ERROR — {type(exc).__name__}: {exc}")
+        _log("Simulator", "ERROR", f"{type(exc).__name__}: {exc}")
         sys.exit(1)
     on_time = sim_stats.get("on_time", 0)
     total_sim = sim_stats.get("total_tasks", len(executed_routes))
     cascades = sim_stats.get("cascade_count", 0)
-    log.info(
-        f"OK — {on_time}/{total_sim} on_time, {cascades} cascade"
+    _log(
+        "Simulator", "OK",
+        f"{on_time}/{total_sim} on_time, {cascades} cascade(s)"
         f" ({time.perf_counter() - t0:.2f}s)"
     )
 
     # ── 5. Metrics ────────────────────────────────────────────────────────────
-    log = logging.getLogger("Metrics")
     t0 = time.perf_counter()
     try:
         compute_and_report(executed_routes, sim_violations, sim_stats, tasks_df, config)
     except Exception as exc:
-        log.error(f"ERROR — {type(exc).__name__}: {exc}")
+        _log("Metrics", "ERROR", f"{type(exc).__name__}: {exc}")
         sys.exit(1)
-    log.info(f"OK — reports/ saved (gantt, load_chart, results.csv) ({time.perf_counter() - t0:.2f}s)")
+    _log("Metrics", "OK", f"reports/ saved (gantt, load_chart, results.csv) ({time.perf_counter() - t0:.2f}s)")
 
-    root_log.info(f"DONE — total time: {time.perf_counter() - pipeline_start:.1f}s")
+    _log("Pipeline", "DONE", f"total time: {time.perf_counter() - pipeline_start:.1f}s")
 
 
 if __name__ == "__main__":
