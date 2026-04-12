@@ -33,10 +33,13 @@ class Optimizer:
     ) -> None:
         if tasks_df is None or tasks_df.empty:
             raise ValueError("tasks_df must not be empty")
+        if vehicles_df is None or vehicles_df.empty:
+            raise ValueError("vehicles_df must not be empty")
         if "optimizer" not in config:
             raise ValueError("config missing required section: 'optimizer'")
 
         self._validate_graph(apron_graph)
+        self._validate_stand_ids(tasks_df, apron_graph)
 
         self.tasks_df = tasks_df.copy()
         self.vehicles_df = vehicles_df.copy()
@@ -78,10 +81,18 @@ class Optimizer:
     # ------------------------------------------------------------------
 
     def _validate_graph(self, apron_graph: nx.Graph) -> None:
-        if apron_graph is None or len(apron_graph.nodes) == 0:
+        if apron_graph is None or apron_graph.number_of_nodes() == 0:
             raise RuntimeError("apron_graph is empty")
         if not nx.is_connected(apron_graph):
             raise RuntimeError("apron_graph is not connected")
+
+    def _validate_stand_ids(self, tasks_df: pd.DataFrame, apron_graph: nx.Graph) -> None:
+        graph_nodes = set(apron_graph.nodes)
+        unknown = set(tasks_df["stand_id"].unique()) - graph_nodes
+        if unknown:
+            raise ValueError(
+                f"tasks_df references stand_id(s) not in apron_graph: {unknown}"
+            )
 
     # ------------------------------------------------------------------
     # Step 1 — urgency
@@ -102,8 +113,10 @@ class Optimizer:
                     )
             else:
                 _log("WARN", "service_time_pred missing and no fallback — using 0.0")
-                df["service_time_pred"] = df.get("service_time_pred", 0.0)
-                df["service_time_pred"] = df["service_time_pred"].fillna(0.0)
+                if "service_time_pred" not in df.columns:
+                    df["service_time_pred"] = 0.0
+                else:
+                    df["service_time_pred"] = df["service_time_pred"].fillna(0.0)
 
         df["urgency"] = (
             (df["STD"] - df["earliest_start"]).dt.total_seconds() / 60.0
@@ -224,7 +237,9 @@ class Optimizer:
                 violations.append({"task_id": task_id, "reason": "no_vehicle_of_type"})
                 continue
 
-            # Score each candidate
+            # Score each candidate: (infeasible_flag, actual_start) — minimise
+            # infeasible_flag=0 means feasible (preferred), 1 means not
+            best_score: tuple | None = None
             best_vid: str | None = None
             best_actual_start: datetime | None = None
             best_end_time: datetime | None = None
@@ -245,26 +260,14 @@ class Optimizer:
                 end_time = actual_start + timedelta(minutes=svc_time)
                 feasible = end_time <= std
 
-                if best_vid is None:
+                score = (0 if feasible else 1, actual_start)
+                if best_score is None or score < best_score:
+                    best_score = score
                     best_vid = vid
                     best_actual_start = actual_start
                     best_end_time = end_time
                     best_route = route
                     best_feasible = feasible
-                else:
-                    # Prefer feasible; among equal feasibility prefer earlier start
-                    if feasible and not best_feasible:
-                        best_vid = vid
-                        best_actual_start = actual_start
-                        best_end_time = end_time
-                        best_route = route
-                        best_feasible = feasible
-                    elif feasible == best_feasible and actual_start < best_actual_start:
-                        best_vid = vid
-                        best_actual_start = actual_start
-                        best_end_time = end_time
-                        best_route = route
-                        best_feasible = feasible
 
             if best_vid is None:
                 violations.append({"task_id": task_id, "reason": "no_reachable_vehicle"})
