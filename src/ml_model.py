@@ -137,5 +137,18 @@ class MLForecast:
 
     def _encode_features(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
+        df["task_type_enc"] = df["task_type"].map(self._TASK_TYPE_MAP).fillna(-1).astype(int)
+        df["aircraft_type_enc"] = df["aircraft_type"].map(self._AIRCRAFT_TYPE_MAP).fillna(-1).astype(int)
+        df["stand_id_enc"] = df["stand_id"].map(self._stand_id_map).fillna(-1).astype(int)
+        return df
 
-        
+
+def run_ml_forecast(
+    tasks_df: pd.DataFrame,
+    seed: int = 42,
+    config: dict | None = None,
+    history_df: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, float]:
+    """Convenience wrapper: instantiate MLForecast and run fit_predict."""
+    model = MLForecast(seed=seed, config=config)
+    return model.fit_predict(tasks_df, history_df=history_df)
