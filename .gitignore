@@ -3,6 +3,7 @@ reports/
 data/
 
 # Claude / AI workflow
+CLAUDE.md
 CONTEXT.md
 plan.md
 pipeline.mermaid
