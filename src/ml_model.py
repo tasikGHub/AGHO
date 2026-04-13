@@ -49,6 +49,7 @@ class MLForecast:
         self,
         tasks_df: pd.DataFrame,
         history_df: pd.DataFrame | None = None,
+        config: dict | None = None,
     ) -> tuple[pd.DataFrame, float]:
         """
         Train on history_df (if provided) or tasks_df, then predict on tasks_df.
@@ -96,6 +97,23 @@ class MLForecast:
             # Baseline MAE — predicting mean of training targets for all test samples
             baseline_mae = float(mean_absolute_error(y_te, np.full(len(y_te), np.mean(y_tr))))
             improvement = (baseline_mae - mae) / baseline_mae * 100 if baseline_mae > 0 else 0.0
+
+            # Save model report artefacts
+            try:
+                from model_report import save_model_report
+                save_model_report(
+                    eval_model=eval_model,
+                    X_train=X_tr, X_test=X_te,
+                    y_train=y_tr, y_test=y_te,
+                    feature_cols=self.FEATURE_COLS,
+                    mae=mae,
+                    baseline_mae=baseline_mae,
+                    improvement=improvement,
+                    seed=self.seed,
+                    config=config or {},
+                )
+            except Exception as report_exc:
+                _log("WARN", f"model report skipped — {report_exc}")
 
             # Final model trained on all training data
             self.model.fit(X_all, y_all)
@@ -151,4 +169,4 @@ def run_ml_forecast(
 ) -> tuple[pd.DataFrame, float]:
     """Convenience wrapper: instantiate MLForecast and run fit_predict."""
     model = MLForecast(seed=seed, config=config)
-    return model.fit_predict(tasks_df, history_df=history_df)
+    return model.fit_predict(tasks_df, history_df=history_df, config=config)
