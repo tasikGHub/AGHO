@@ -93,6 +93,7 @@ ml_model:
 metrics:
   charts_dir: "charts"           # PNG-диаграммы: routes_gantt.png, load_chart.png
   reports_dir: "reports"         # табличные данные: results.csv
+  model_params_dir: "model_params"  # ML model report artefacts
   save_routes_gantt: true
   save_load_chart: true
   save_results_csv: true
