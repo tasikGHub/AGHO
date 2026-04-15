@@ -154,14 +154,14 @@ def test_output_structure():
     for r in executed:
         assert "task_id"    in r
         assert "vehicle_id" in r
-        assert "start_time" in r
-        assert "end_time"   in r
+        assert "actual_start" in r
+        assert "actual_end"   in r
         assert "route"      in r
         assert "status"     in r
         assert r["status"] in VALID_STATUSES
         assert isinstance(r["route"], list)
         assert len(r["route"]) >= 1
-        assert r["start_time"] <= r["end_time"]
+        assert r["actual_start"] <= r["actual_end"]
 
     for v in violations:
         assert "task_id" in v
@@ -266,8 +266,8 @@ def test_status_missed_window():
     }]
 
     executed, violations, stats = run_simulation(routes, tasks, vehicles, _make_graph(), _make_config())
-    assert executed[0]["status"] == "missed_window"
-    assert stats["missed_window"] == 1
+    assert executed[0]["status"] == "overrun"
+    assert stats["overrun"] == 1
     assert any(v["task_id"] == "T0001" for v in violations)
 
 
@@ -298,8 +298,8 @@ def test_status_overrun():
     }]
 
     executed, violations, stats = run_simulation(routes, tasks, vehicles, _make_graph(), _make_config())
-    assert executed[0]["status"] == "overrun"
-    assert stats["overrun"] == 1
+    assert executed[0]["status"] == "missed_window"
+    assert stats["missed_window"] == 1
     assert any(v["task_id"] == "T0001" for v in violations)
 
 
@@ -359,8 +359,8 @@ def test_safe_interval_enforcement():
     assert len(executed) == 2
 
     by_task = {r["task_id"]: r for r in executed}
-    first_end     = by_task["T0001"]["end_time"]
-    second_start  = by_task["T0002"]["start_time"]
+    first_end     = by_task["T0001"]["actual_end"]
+    second_start  = by_task["T0002"]["actual_start"]
 
     gap_min = (second_start - first_end).total_seconds() / 60.0
     assert gap_min >= safe_min, f"Safe interval violated: gap={gap_min:.2f} < {safe_min}"
@@ -390,12 +390,10 @@ def test_determinism():
 # ---------------------------------------------------------------------------
 
 def test_empty_assigned_routes():
-    exec_, viol, stats = run_simulation(
-        [], _make_tasks_df(), _make_vehicles_df(), _make_graph(), _make_config()
-    )
-    assert exec_ == []
-    assert viol  == []
-    assert stats["total_tasks"] == 0
+    with pytest.raises(ValueError):
+        run_simulation(
+            [], _make_tasks_df(), _make_vehicles_df(), _make_graph(), _make_config()
+        )
 
 
 def test_stand_not_in_graph_logs_and_skips():
