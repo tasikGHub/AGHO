@@ -312,6 +312,14 @@ class Optimizer:
         assigned_routes: list[dict] = []
         violations: list[dict] = []
 
+        has_flight_id = "flight_id" in sorted_df.columns
+        if not has_flight_id:
+            _log(
+                "WARN",
+                "flight_id column missing — safe_interval will be enforced between "
+                "all tasks at the same stand, including intra-flight turnaround",
+            )
+
         for _, task in sorted_df.iterrows():
             task_id = task["task_id"]
             stand_id = task["stand_id"]
@@ -319,7 +327,8 @@ class Optimizer:
             earliest_start: datetime = task["earliest_start"]
             std: datetime = task["STD"]
             svc_time: float = task["service_time_pred"]
-            flight_id = task.get("flight_id") if "flight_id" in sorted_df.columns else None
+            raw_fid = task.get("flight_id") if has_flight_id else None
+            flight_id = raw_fid if raw_fid is not None and pd.notna(raw_fid) else None
 
             # Filter candidates by vehicle type
             candidates = [

@@ -81,9 +81,11 @@ class MLForecast:
         y_all = train_df["service_time_actual"].values.astype(float)
         self._fallback_mean = float(np.mean(y_all))
 
-        # Build stand_id encoding from union of training + operational stands (deterministic)
-        all_stands = sorted(set(train_df["stand_id"].unique()) | set(tasks_df["stand_id"].unique()))
-        self._stand_id_map = {s: i for i, s in enumerate(all_stands)}
+        # Build stand_id encoding strictly from training data — avoids leaking
+        # operational stand distribution into the model. Unknown operational
+        # stands get encoded as -1 via fillna(-1) in _encode_features.
+        train_stands = sorted(train_df["stand_id"].unique())
+        self._stand_id_map = {s: i for i, s in enumerate(train_stands)}
 
         try:
             train_enc = self._encode_features(train_df)
