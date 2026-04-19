@@ -16,3 +16,28 @@ prompts/
 
 # Administrative
 project_tech_task.md
+
+# Python artefacts
+__pycache__/
+*.pyc
+*.pyo
+
+# Office lock / temp files
+~$*
+*.tmp
+
+# Defense / working drafts — not part of the delivered repo
+defense_report.docx
+defense_report_ru.docx
+charts_deprecated/
+model_params/
+create_code_review.md
+create_pipeline.md
+metrics_design.md
+optimizer_upgrade.md
+optimizer_work.md
+pipeline_design.md
+science_context.md
+simulator_design.md
+data_schema.md
+module_interfaces.md

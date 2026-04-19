@@ -398,6 +398,114 @@ def test_empty_assigned_routes():
     assert stats["total_tasks"] == 0
 
 
+def test_max_delay_tolerance():
+    """
+    Task finishing within [STD, STD + max_delay_min] must be classified
+    as on_time (or delayed) — not overrun. Strict STD (max_delay=0) should
+    flag the same task as overrun. Matches Sahadevan 2023 tolerance model.
+    """
+    earliest = BASE_TIME
+    std = BASE_TIME + timedelta(minutes=30)
+    tasks = pd.DataFrame([{
+        "task_id": "T0001", "flight_id": "FL001",
+        "task_type": "fueling", "priority_group": 2,
+        "stand_id": "S01", "STA": BASE_TIME,
+        "STD": std, "earliest_start": earliest,
+        "vehicle_type_req": "fuel_truck",
+        "service_time_pred": 35.0,  # ends 5 min past STD
+    }])
+    vehicles = pd.DataFrame([{
+        "vehicle_id": "V01", "vehicle_type": "fuel_truck",
+        "speed_kmh": 25.0, "capacity": 20000.0,
+        "start_stand": "S01", "free_at": BASE_TIME,
+    }])
+    routes = [{
+        "task_id": "T0001", "vehicle_id": "V01",
+        "start_time": BASE_TIME,
+        "end_time":   BASE_TIME + timedelta(minutes=35),
+        "route": ["S01"],
+    }]
+
+    # With tolerance — 5 min overshoot within 10 min tolerance → not overrun
+    cfg_tolerant = _make_config()
+    cfg_tolerant["optimizer"]["max_delay_min"] = 10
+    executed, violations, stats = run_simulation(
+        routes, tasks, vehicles, _make_graph(), cfg_tolerant
+    )
+    assert executed[0]["status"] in {"on_time", "delayed"}
+    assert stats["overrun"] == 0
+    assert not any(v["reason"] == "overrun" for v in violations)
+
+    # Strict STD (default max_delay_min=0) — same task must now be overrun
+    cfg_strict = _make_config()
+    executed_s, _, stats_s = run_simulation(
+        routes, tasks, vehicles, _make_graph(), cfg_strict
+    )
+    assert executed_s[0]["status"] == "overrun"
+    assert stats_s["overrun"] == 1
+
+
+def test_cascade_count_increments():
+    """
+    Two tasks of DIFFERENT flights at the same stand, scheduled closer than
+    safe_interval_min apart — simulator must push the second start forward
+    and increment cascade_count by at least 1.
+    """
+    std = BASE_TIME + timedelta(hours=3)
+    earliest = BASE_TIME + timedelta(minutes=15)
+    cfg = _make_config()  # safe_interval_min = 2
+    safe_min = cfg["optimizer"]["safe_interval_min"]
+
+    tasks = pd.DataFrame([
+        {
+            "task_id": "T0001", "flight_id": "FL001",
+            "task_type": "deicing", "priority_group": 1,
+            "stand_id": "S01", "STA": BASE_TIME,
+            "STD": std, "earliest_start": earliest,
+            "vehicle_type_req": "deicing_truck",
+            "service_time_pred": 20.0,
+        },
+        {
+            "task_id": "T0002", "flight_id": "FL002",
+            "task_type": "deicing", "priority_group": 1,
+            "stand_id": "S01", "STA": BASE_TIME,
+            "STD": std, "earliest_start": earliest,
+            "vehicle_type_req": "deicing_truck",
+            "service_time_pred": 20.0,
+        },
+    ])
+    vehicles = pd.DataFrame([{
+        "vehicle_id": "V01", "vehicle_type": "deicing_truck",
+        "speed_kmh": 20.0, "capacity": 5000.0,
+        "start_stand": "DEPOT", "free_at": BASE_TIME,
+    }])
+    t_start1 = earliest
+    t_end1   = t_start1 + timedelta(minutes=20)
+    # Scheduled only 1 min after first — below safe_interval (2 min)
+    t_start2 = t_end1 + timedelta(minutes=1)
+    t_end2   = t_start2 + timedelta(minutes=20)
+    routes = [
+        {
+            "task_id": "T0001", "vehicle_id": "V01",
+            "start_time": t_start1, "end_time": t_end1,
+            "route": ["DEPOT", "S01"],
+        },
+        {
+            "task_id": "T0002", "vehicle_id": "V01",
+            "start_time": t_start2, "end_time": t_end2,
+            "route": ["S01"],
+        },
+    ]
+
+    executed, _, stats = run_simulation(routes, tasks, vehicles, _make_graph(), cfg)
+
+    assert stats["cascade_count"] >= 1, "cascade_count must be incremented when safe_interval pushes start"
+
+    by_task = {r["task_id"]: r for r in executed}
+    gap_min = (by_task["T0002"]["actual_start"] - by_task["T0001"]["actual_end"]).total_seconds() / 60.0
+    assert gap_min >= safe_min
+
+
 def test_stand_not_in_graph_logs_and_skips():
     """If stand is missing from apron_graph, task is skipped with a violation."""
     tasks = pd.DataFrame([{
