@@ -2,6 +2,17 @@
 # Все параметры проекта. Никаких хардкоженных чисел в коде.
 
 # -------------------------------------------------------------------
+# System-level tunables — основные параметры для кастомизации
+# -------------------------------------------------------------------
+system:
+  PRIORITY_WEIGHTS:
+    deicing: 1
+    fueling: 2
+    catering: 3
+  MAX_DELAY_MIN: 15
+  OUTPUT_DIR: "reports"
+
+# -------------------------------------------------------------------
 # DataGenerator
 # -------------------------------------------------------------------
 data_generator:
@@ -72,11 +83,7 @@ apron:
 # Optimizer
 # -------------------------------------------------------------------
 optimizer:
-  priority_groups:
-    deicing: 1
-    fueling: 2
-    catering: 3
-
+  # priority_groups — см. system.PRIORITY_WEIGHTS (инжектится pipeline'ом)
   safe_interval_min: 2          # минимальный интервал между операциями у ВС (мин)
   max_speed_kmh: 30             # ограничение скорости на перроне
 
@@ -92,7 +99,7 @@ ml_model:
 # -------------------------------------------------------------------
 metrics:
   charts_dir: "charts"           # PNG-диаграммы: routes_gantt.png, load_chart.png
-  reports_dir: "reports"         # табличные данные: results.csv
+  # reports_dir — см. system.OUTPUT_DIR (инжектится pipeline'ом)
   model_params_dir: "model_params"  # ML model report artefacts
   save_routes_gantt: true
   save_load_chart: true

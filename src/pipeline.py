@@ -19,7 +19,19 @@ from optimizer import run_optimizer
 from simulator import run_simulation
 from metrics import compute_and_report
 
-_REQUIRED_SECTIONS = ("data_generator", "vehicles", "apron", "optimizer", "metrics")
+_REQUIRED_SECTIONS = ("system", "data_generator", "vehicles", "apron", "optimizer", "metrics")
+_REQUIRED_SYSTEM_KEYS = ("PRIORITY_WEIGHTS", "MAX_DELAY_MIN", "OUTPUT_DIR")
+
+
+def _apply_system_tunables(config: dict) -> None:
+    """Inject system-level tunables into module-specific sections."""
+    system = config["system"]
+    for key in _REQUIRED_SYSTEM_KEYS:
+        if key not in system:
+            raise KeyError(f"Missing required system tunable: '{key}'")
+    config["optimizer"]["priority_groups"] = system["PRIORITY_WEIGHTS"]
+    config["optimizer"]["max_delay_min"] = system["MAX_DELAY_MIN"]
+    config["metrics"]["reports_dir"] = system["OUTPUT_DIR"]
 
 
 def _log(module: str, level: str, message: str) -> None:
@@ -60,6 +72,7 @@ def load_config(config_path: str) -> dict:
     for section in _REQUIRED_SECTIONS:
         if section not in config:
             raise KeyError(f"Missing required config section: '{section}'")
+    _apply_system_tunables(config)
     return config
 
 
