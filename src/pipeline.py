@@ -22,6 +22,10 @@ from ml_model import run_ml_forecast
 from optimizer import run_optimizer
 from simulator import run_simulation
 from metrics import compute_and_report
+try:
+    from utils import log as _shared_log
+except ImportError:
+    from src.utils import log as _shared_log
 
 _REQUIRED_SECTIONS = ("system", "data_generator", "vehicles", "apron", "optimizer", "metrics")
 _REQUIRED_SYSTEM_KEYS = ("PRIORITY_WEIGHTS", "MAX_DELAY_MIN", "OUTPUT_DIR")
@@ -39,8 +43,7 @@ def _apply_system_tunables(config: dict) -> None:
 
 
 def _log(module: str, level: str, message: str) -> None:
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] [{module}] {level} — {message}")
+    _shared_log(module, level, message)
 
 
 def _check_fleet_capacity(tasks_df, vehicles_df, config) -> None:

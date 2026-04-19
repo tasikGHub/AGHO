@@ -8,10 +8,14 @@ from datetime import datetime, timedelta
 import networkx as nx
 import pandas as pd
 
+try:
+    from utils import log as _shared_log, compute_travel_time_min
+except ImportError:
+    from src.utils import log as _shared_log, compute_travel_time_min
+
 
 def _log(level: str, message: str) -> None:
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] [Optimizer]     {level} — {message}")
+    _shared_log("Optimizer", level, message)
 
 
 class Optimizer:
@@ -273,9 +277,9 @@ class Optimizer:
         except nx.NodeNotFound as exc:
             raise RuntimeError(f"apron_graph node not found: {exc}")
 
-        effective_speed_kmh = min(v_state_entry["speed_kmh"], self.max_speed_kmh)
-        # distance_m / (m/min) = minutes;  speed_kmh * 1000/60 = m/min
-        travel_time_min = dist_m / (effective_speed_kmh * 1000.0 / 60.0)
+        travel_time_min = compute_travel_time_min(
+            dist_m, v_state_entry["speed_kmh"], self.max_speed_kmh
+        )
         return travel_time_min, path
 
     # ------------------------------------------------------------------

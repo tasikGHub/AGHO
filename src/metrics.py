@@ -7,13 +7,17 @@ Only aggregates data from simulator output — no business logic.
 """
 
 import os
-from datetime import datetime
 
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend — must precede pyplot import
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import pandas as pd
+
+try:
+    from utils import log as _shared_log
+except ImportError:
+    from src.utils import log as _shared_log
 
 # ---------------------------------------------------------------------------
 # Colour maps
@@ -38,8 +42,7 @@ _VTYPE_COLORS = {
 
 
 def _log(level: str, message: str) -> None:
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] [Metrics]        {level} — {message}")
+    _shared_log("Metrics", level, message)
 
 
 # ---------------------------------------------------------------------------

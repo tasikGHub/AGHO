@@ -4,7 +4,6 @@ Predicts service_time for each task using RandomForestRegressor.
 """
 
 import json
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -14,10 +13,14 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.model_selection import train_test_split
 
+try:
+    from utils import log as _shared_log
+except ImportError:
+    from src.utils import log as _shared_log
+
 
 def _log(level: str, message: str) -> None:
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] [MLForecast]    {level} — {message}")
+    _shared_log("MLForecast", level, message)
 
 
 class MLForecast:
