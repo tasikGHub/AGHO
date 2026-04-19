@@ -64,20 +64,26 @@ def _make_executed_routes():
     return [
         {
             "task_id": "T1", "vehicle_id": "V01",
-            "start_time": EARLIEST,
-            "end_time": EARLIEST + timedelta(minutes=20),
+            "planned_start": EARLIEST,
+            "actual_start": EARLIEST,
+            "actual_end": EARLIEST + timedelta(minutes=20),
+            "delay_min": 0.0,
             "status": "on_time",
         },
         {
             "task_id": "T2", "vehicle_id": "V02",
-            "start_time": EARLIEST + timedelta(minutes=10),
-            "end_time": EARLIEST + timedelta(minutes=30),
+            "planned_start": EARLIEST,
+            "actual_start": EARLIEST + timedelta(minutes=10),
+            "actual_end": EARLIEST + timedelta(minutes=30),
+            "delay_min": 10.0,
             "status": "delayed",
         },
         {
             "task_id": "T3", "vehicle_id": "V03",
-            "start_time": EARLIEST + timedelta(minutes=80),
-            "end_time": EARLIEST + timedelta(minutes=100),
+            "planned_start": EARLIEST,
+            "actual_start": EARLIEST + timedelta(minutes=80),
+            "actual_end": EARLIEST + timedelta(minutes=100),
+            "delay_min": 80.0,
             "status": "missed_window",
         },
     ]

@@ -3,12 +3,15 @@ MLForecast — Airport Ground Handling Optimizer
 Predicts service_time for each task using RandomForestRegressor.
 """
 
+import json
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_absolute_error
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.model_selection import train_test_split
 
 
@@ -92,11 +95,32 @@ class MLForecast:
             )
             eval_model = RandomForestRegressor(n_estimators=self._n_estimators, random_state=self.seed)
             eval_model.fit(X_tr, y_tr)
-            mae = float(mean_absolute_error(y_te, eval_model.predict(X_te)))
+            rf_preds = eval_model.predict(X_te)
+            mae = float(mean_absolute_error(y_te, rf_preds))
+            rf_rmse = float(np.sqrt(mean_squared_error(y_te, rf_preds)))
+
+            # MLR baseline (Sahadevan et al. 2023 Table 5 equivalent)
+            mlr_model = LinearRegression()
+            mlr_model.fit(X_tr, y_tr)
+            mlr_preds = mlr_model.predict(X_te)
+            mlr_mae = float(mean_absolute_error(y_te, mlr_preds))
+            mlr_rmse = float(np.sqrt(mean_squared_error(y_te, mlr_preds)))
 
             # Baseline MAE — predicting mean of training targets for all test samples
-            baseline_mae = float(mean_absolute_error(y_te, np.full(len(y_te), np.mean(y_tr))))
+            baseline_preds = np.full(len(y_te), np.mean(y_tr))
+            baseline_mae = float(mean_absolute_error(y_te, baseline_preds))
+            baseline_rmse = float(np.sqrt(mean_squared_error(y_te, baseline_preds)))
             improvement = (baseline_mae - mae) / baseline_mae * 100 if baseline_mae > 0 else 0.0
+            mlr_improvement = (baseline_mae - mlr_mae) / baseline_mae * 100 if baseline_mae > 0 else 0.0
+
+            # Save model comparison artefact
+            self._save_model_comparison(
+                baseline_mae=baseline_mae, baseline_rmse=baseline_rmse,
+                mlr_mae=mlr_mae, mlr_rmse=mlr_rmse,
+                rf_mae=mae, rf_rmse=rf_rmse,
+                mlr_improvement=mlr_improvement, rf_improvement=improvement,
+                config=config or {},
+            )
 
             # Save model report artefacts
             try:
@@ -126,15 +150,13 @@ class MLForecast:
             if history_df is not None:
                 _log("OK", (
                     f"trained on {len(train_df)} historical tasks | "
-                    f"MAE (RF): {mae:.1f} min | "
-                    f"MAE (baseline): {baseline_mae:.1f} min | "
-                    f"Improvement: +{improvement:.0f}%"
+                    f"MAE: RF={mae:.1f}, MLR={mlr_mae:.1f}, baseline={baseline_mae:.1f} min | "
+                    f"Improvement vs baseline: RF +{improvement:.0f}%, MLR +{mlr_improvement:.0f}%"
                 ))
             else:
                 _log("OK", (
-                    f"MAE (RF): {mae:.1f} min | "
-                    f"MAE (baseline): {baseline_mae:.1f} min | "
-                    f"Improvement: +{improvement:.0f}%"
+                    f"MAE: RF={mae:.1f}, MLR={mlr_mae:.1f}, baseline={baseline_mae:.1f} min | "
+                    f"Improvement vs baseline: RF +{improvement:.0f}%, MLR +{mlr_improvement:.0f}%"
                 ))
 
         except Exception as exc:
@@ -152,6 +174,36 @@ class MLForecast:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _save_model_comparison(
+        self,
+        baseline_mae: float, baseline_rmse: float,
+        mlr_mae: float, mlr_rmse: float,
+        rf_mae: float, rf_rmse: float,
+        mlr_improvement: float, rf_improvement: float,
+        config: dict,
+    ) -> None:
+        """Persist MAE/RMSE comparison for RF, MLR, baseline to model_params/model_comparison.json."""
+        out_dir = Path(
+            config.get("metrics", {}).get("model_params_dir", "model_params")
+        )
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "baseline_mean": {"MAE": round(baseline_mae, 2), "RMSE": round(baseline_rmse, 2)},
+                "mlr":           {"MAE": round(mlr_mae, 2),      "RMSE": round(mlr_rmse, 2)},
+                "rf":            {"MAE": round(rf_mae, 2),       "RMSE": round(rf_rmse, 2)},
+                "improvement_vs_baseline": {
+                    "mlr": f"+{mlr_improvement:.0f}%",
+                    "rf":  f"+{rf_improvement:.0f}%",
+                },
+                "seed": self.seed,
+                "n_estimators_rf": self._n_estimators,
+            }
+            with (out_dir / "model_comparison.json").open("w", encoding="utf-8") as fh:
+                json.dump(payload, fh, indent=2)
+        except Exception as exc:
+            _log("WARN", f"model_comparison.json not saved — {exc}")
 
     def _encode_features(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()

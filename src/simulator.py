@@ -101,11 +101,19 @@ def run_simulation(
         {total_tasks, on_time, delayed, missed_window, overrun, violation_count}
     """
     if not assigned_routes:
-        raise ValueError("assigned_routes is empty — nothing to simulate")
+        _log("OK", "0/0 tasks on_time, 0 violations (empty input)")
+        return [], [], {
+            "total_tasks": 0, "on_time": 0, "delayed": 0,
+            "missed_window": 0, "overrun": 0,
+            "violation_count": 0, "cascade_count": 0,
+        }
 
     opt_cfg = config["optimizer"]
     safe_interval_min: float = float(opt_cfg["safe_interval_min"])
     max_speed_kmh: float = float(opt_cfg["max_speed_kmh"])
+    # Tolerance for on_time classification (Sahadevan 2023): task on-time if
+    # it finishes within MAX_DELAY_MIN of STD. Defaults to 0 (strict STD).
+    max_delay_min: float = float(opt_cfg.get("max_delay_min", 0.0))
 
     # Index tasks by task_id for O(1) lookups
     tasks_index: dict[str, dict] = {
@@ -123,8 +131,11 @@ def run_simulation(
         for _, row in vehicles_df.iterrows()
     }
 
-    # Stand safe-interval tracker: stand_id → last end_time at that stand
-    stand_last_end: dict[str, datetime] = {}
+    # Stand safe-interval tracker: stand_id → (last end_time, flight_id)
+    # flight_id is tracked so safe_interval is only enforced between
+    # DIFFERENT flights on the same stand — same-flight tasks (e.g. deicing,
+    # fueling, catering for FL001 on S01) are part of one turnaround.
+    stand_last: dict[str, tuple[datetime, str | None]] = {}
 
     # Process routes in ascending start_time order (deterministic)
     sorted_routes = sorted(assigned_routes, key=lambda r: r["start_time"])
@@ -149,6 +160,7 @@ def run_simulation(
         earliest_start: datetime = task["earliest_start"]
         std: datetime = task["STD"]
         svc_time: float = float(task.get("service_time_pred", 0.0))
+        flight_id: str | None = task.get("flight_id")
 
         # stand_id: prefer from tasks_df; fallback to last node in planned route
         stand_id: str = task.get("stand_id") or (planned_route[-1] if planned_route else "")
@@ -180,28 +192,31 @@ def run_simulation(
         # Aircraft must be parked before servicing starts
         actual_start: datetime = max(raw_start, earliest_start)
 
-        # --- Step 3: safe interval between operations at the same stand ---
-        last_end = stand_last_end.get(stand_id)
-        if last_end is not None:
-            earliest_allowed = last_end + timedelta(minutes=safe_interval_min)
-            if earliest_allowed > actual_start:
-                actual_start = earliest_allowed
-                cascade_count += 1
+        # --- Step 3: safe interval — only between DIFFERENT flights at the same stand ---
+        entry = stand_last.get(stand_id)
+        if entry is not None:
+            last_end, last_flight_id = entry
+            if flight_id is None or last_flight_id != flight_id:
+                earliest_allowed = last_end + timedelta(minutes=safe_interval_min)
+                if earliest_allowed > actual_start:
+                    actual_start = earliest_allowed
+                    cascade_count += 1
 
         actual_end: datetime = actual_start + timedelta(minutes=svc_time)
         delay_min: float = max(0.0, (actual_start - planned_start).total_seconds() / 60.0)
 
-        # --- Status classification ---
+        # --- Status classification (with ±MAX_DELAY_MIN tolerance vs STD) ---
+        lateness_min = (actual_end - std).total_seconds() / 60.0
         if actual_start >= std:
             # Task started at or after STD — window completely missed
             status = "missed_window"
             sim_violations.append({"task_id": task_id, "reason": "missed_window"})
-        elif actual_end > std:
-            # Started in time but overruns STD
+        elif lateness_min > max_delay_min:
+            # Overshoot beyond tolerance
             status = "overrun"
             sim_violations.append({"task_id": task_id, "reason": "overrun"})
         elif actual_start > earliest_start:
-            # Late arrival but task finishes before STD
+            # Late arrival but finishes within tolerance
             status = "delayed"
         else:
             status = "on_time"
@@ -221,10 +236,10 @@ def run_simulation(
         vs["free_at"] = actual_end
         vs["current_pos"] = stand_id
 
-        # Update stand safe-interval tracker
-        prev_end = stand_last_end.get(stand_id)
-        if prev_end is None or actual_end > prev_end:
-            stand_last_end[stand_id] = actual_end
+        # Update stand safe-interval tracker: (end_time, flight_id)
+        prev = stand_last.get(stand_id)
+        if prev is None or actual_end > prev[0]:
+            stand_last[stand_id] = (actual_end, flight_id)
 
     # --- Aggregate stats ---
     status_counts: dict[str, int] = {"on_time": 0, "delayed": 0, "missed_window": 0, "overrun": 0}

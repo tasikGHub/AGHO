@@ -252,6 +252,29 @@ def _save_load_chart(
     plt.close()
 
 
+def _save_hourly_load_chart(tasks_df: pd.DataFrame, reports_dir: str) -> None:
+    """Save hourly distribution of tasks by type — Figure 3/4 analogue (Sahadevan 2023)."""
+    if tasks_df.empty or "STA" not in tasks_df.columns or "task_type" not in tasks_df.columns:
+        return
+    df = tasks_df.copy()
+    df["hour"] = pd.to_datetime(df["STA"]).dt.hour
+    pivot = df.pivot_table(
+        index="hour", columns="task_type", values="task_id", aggfunc="count"
+    ).fillna(0)
+    if pivot.empty:
+        return
+    fig, ax = plt.subplots(figsize=(10, 5))
+    pivot.plot(kind="bar", stacked=True, ax=ax,
+               color=[_VTYPE_COLORS.get(f"{c}_truck", "#7f7f7f") for c in pivot.columns])
+    ax.set_xlabel("Hour of day")
+    ax.set_ylabel("Number of tasks")
+    ax.set_title("Hourly task distribution by type (analog Figure 3, Sahadevan et al. 2023)")
+    ax.legend(title="Task type")
+    fig.tight_layout()
+    fig.savefig(os.path.join(reports_dir, "hourly_load.png"), dpi=100)
+    plt.close(fig)
+
+
 def _save_results_csv(kpi_dict: dict, reports_dir: str) -> None:
     """Flatten kpi_dict and save to results.csv."""
     rows = []
@@ -384,6 +407,7 @@ def compute_and_report(
 
     if metrics_cfg.get("save_load_chart", True):
         _save_load_chart(kpi_dict["vehicle_utilization"], vehicle_type_map, reports_dir)
+        _save_hourly_load_chart(tasks_df, reports_dir)
 
     if metrics_cfg.get("save_results_csv", True):
         _save_results_csv(kpi_dict, reports_dir)

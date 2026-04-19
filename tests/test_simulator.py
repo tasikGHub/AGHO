@@ -152,16 +152,16 @@ def test_output_structure():
     assert isinstance(stats, dict)
 
     for r in executed:
-        assert "task_id"    in r
-        assert "vehicle_id" in r
-        assert "start_time" in r
-        assert "end_time"   in r
-        assert "route"      in r
-        assert "status"     in r
+        assert "task_id"     in r
+        assert "vehicle_id"  in r
+        assert "actual_start" in r
+        assert "actual_end"   in r
+        assert "route"       in r
+        assert "status"      in r
         assert r["status"] in VALID_STATUSES
         assert isinstance(r["route"], list)
         assert len(r["route"]) >= 1
-        assert r["start_time"] <= r["end_time"]
+        assert r["actual_start"] <= r["actual_end"]
 
     for v in violations:
         assert "task_id" in v
@@ -241,8 +241,8 @@ def test_status_delayed():
     assert stats["delayed"] == 1
 
 
-def test_status_missed_window():
-    """Service cannot finish before STD."""
+def test_status_overrun():
+    """Started before STD but service finishes past STD — overrun per simulator_design.md."""
     earliest = BASE_TIME
     std = BASE_TIME + timedelta(minutes=10)
     tasks = pd.DataFrame([{
@@ -266,13 +266,13 @@ def test_status_missed_window():
     }]
 
     executed, violations, stats = run_simulation(routes, tasks, vehicles, _make_graph(), _make_config())
-    assert executed[0]["status"] == "missed_window"
-    assert stats["missed_window"] == 1
+    assert executed[0]["status"] == "overrun"
+    assert stats["overrun"] == 1
     assert any(v["task_id"] == "T0001" for v in violations)
 
 
-def test_status_overrun():
-    """Vehicle becomes available only after STD."""
+def test_status_missed_window():
+    """Vehicle becomes available only after STD — task started past STD, missed_window."""
     std = BASE_TIME + timedelta(minutes=30)
     tasks = pd.DataFrame([{
         "task_id": "T0001", "flight_id": "FL001",
@@ -298,8 +298,8 @@ def test_status_overrun():
     }]
 
     executed, violations, stats = run_simulation(routes, tasks, vehicles, _make_graph(), _make_config())
-    assert executed[0]["status"] == "overrun"
-    assert stats["overrun"] == 1
+    assert executed[0]["status"] == "missed_window"
+    assert stats["missed_window"] == 1
     assert any(v["task_id"] == "T0001" for v in violations)
 
 
@@ -359,8 +359,8 @@ def test_safe_interval_enforcement():
     assert len(executed) == 2
 
     by_task = {r["task_id"]: r for r in executed}
-    first_end     = by_task["T0001"]["end_time"]
-    second_start  = by_task["T0002"]["start_time"]
+    first_end     = by_task["T0001"]["actual_end"]
+    second_start  = by_task["T0002"]["actual_start"]
 
     gap_min = (second_start - first_end).total_seconds() / 60.0
     assert gap_min >= safe_min, f"Safe interval violated: gap={gap_min:.2f} < {safe_min}"

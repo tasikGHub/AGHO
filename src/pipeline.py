@@ -8,6 +8,10 @@ No business logic here — only calls and structured logging.
 import argparse
 import sys
 import time
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 from datetime import datetime
 from pathlib import Path
 
@@ -37,6 +41,32 @@ def _apply_system_tunables(config: dict) -> None:
 def _log(module: str, level: str, message: str) -> None:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{ts}] [{module}] {level} — {message}")
+
+
+def _check_fleet_capacity(tasks_df, vehicles_df, config) -> None:
+    """Warn if fleet cannot cover expected service load within shift with 75% utilisation."""
+    shift_min = float(config["data_generator"]["time_window_hours"]) * 60.0
+    util_target = 0.75
+    mapping = {
+        "deicing": "deicing_truck",
+        "fueling": "fuel_truck",
+        "catering": "catering_truck",
+    }
+    for tt, vt in mapping.items():
+        total = tasks_df.loc[tasks_df["task_type"] == tt, "service_time_actual"].sum()
+        n_veh = int((vehicles_df["vehicle_type"] == vt).sum())
+        if n_veh == 0:
+            continue
+        required_per_veh = total / n_veh
+        max_allowed = shift_min * util_target
+        if required_per_veh > max_allowed:
+            _log(
+                "Pipeline",
+                "WARN",
+                f"fleet capacity: {tt}: {required_per_veh:.0f} min/vehicle "
+                f"> {max_allowed:.0f} min target ({int(util_target*100)}% of shift) — "
+                f"infeasible fleet sizing (n_{vt}={n_veh})",
+            )
 
 
 def setup_logging() -> None:
@@ -108,6 +138,12 @@ def main() -> None:
         f"{len(flights_df)} flights, {len(vehicles_df)} vehicles,"
         f" {n_stands} stands generated ({time.perf_counter() - t0:.2f}s)"
     )
+
+    # Preflight fleet capacity check — warn if infeasible sizing
+    try:
+        _check_fleet_capacity(tasks_df, vehicles_df, config)
+    except Exception as exc:
+        _log("Pipeline", "WARN", f"fleet capacity check skipped — {exc}")
 
     # ── 1b. Historical data for ML training ───────────────────────────────────
     n_history = config["data_generator"].get("ml_history_flights", 0)

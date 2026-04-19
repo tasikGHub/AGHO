@@ -65,15 +65,89 @@ class Optimizer:
         df = self._compute_urgency(self.tasks_df)
         sorted_df = self._sort_tasks(df)
         v_state = self._init_vehicle_state()
-        stand_last_end: dict[str, datetime] = {}
+        stand_last: dict[str, tuple[datetime, str]] = {}
 
-        assigned_routes, violations = self._assign_tasks(sorted_df, v_state, stand_last_end)
+        assigned_routes, violations = self._assign_tasks(sorted_df, v_state, stand_last)
 
         n_total = len(sorted_df)
         n_assigned = len(assigned_routes)
+
+        self._log_flight_recommendations(assigned_routes)
+
         _log("OK", f"{n_assigned}/{n_total} tasks assigned")
 
         return assigned_routes, violations
+
+    # ------------------------------------------------------------------
+    # Per-flight recommendations
+    # ------------------------------------------------------------------
+
+    _TASK_TYPE_RU = {
+        "deicing": "Деайсинг",
+        "fueling": "Заправка",
+        "catering": "Кейтеринг",
+    }
+
+    def _log_flight_recommendations(self, assigned_routes: list[dict]) -> None:
+        assigned_by_task = {r["task_id"]: r for r in assigned_routes}
+
+        tasks = self.tasks_df
+        if "flight_id" not in tasks.columns:
+            return
+
+        flight_ids = list(dict.fromkeys(tasks["flight_id"].tolist()))
+        max_flights = 5
+        shown = flight_ids[:max_flights]
+        remainder = len(flight_ids) - len(shown)
+
+        risk_margin_min = 5.0
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        for fid in shown:
+            flight_tasks = tasks[tasks["flight_id"] == fid]
+            std = flight_tasks["STD"].iloc[0]
+
+            print(f"[{ts}] [Optimizer]     Рейс {fid}:")
+
+            end_times: list[datetime] = []
+            for _, t in flight_tasks.iterrows():
+                tt = t["task_type"]
+                label = self._TASK_TYPE_RU.get(tt, tt)
+                rec = assigned_by_task.get(t["task_id"])
+
+                if rec is None:
+                    print(f"  ❌ {label}: не назначен")
+                    continue
+
+                start = rec["start_time"]
+                end = rec["end_time"]
+                end_times.append(end)
+                duration_min = int(round((end - start).total_seconds() / 60.0))
+                margin_min = (std - end).total_seconds() / 60.0
+
+                if margin_min < 0:
+                    icon = "⚠️"
+                elif margin_min < risk_margin_min:
+                    icon = "⚠️"
+                else:
+                    icon = "✅"
+
+                print(
+                    f"  {icon} {label}: назначен на {rec['vehicle_id']}, "
+                    f"старт {start.strftime('%H:%M')}, длительность {duration_min} мин"
+                )
+
+            if end_times:
+                margin = int(round((std - max(end_times)).total_seconds() / 60.0))
+                if margin >= 0:
+                    print(f"  📊 Прогноз: все задачи завершатся до STD с запасом {margin} мин")
+                else:
+                    print(f"  📊 Прогноз: превышение STD на {abs(margin)} мин")
+
+        if remainder > 0:
+            print(
+                f"[{ts}] [Optimizer]     ... и ещё {remainder} рейсов успешно спланированы"
+            )
 
     # ------------------------------------------------------------------
     # Validation
@@ -128,6 +202,22 @@ class Optimizer:
     # ------------------------------------------------------------------
 
     def _sort_tasks(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Per-flight sequencing: earliest STD first, then group all tasks of the
+        same flight together, ordered by priority_group (deicing > fueling >
+        catering) as a tie-breaker. This mirrors real turnaround planning —
+        the flight closest to departure gets attention first; priority_group
+        only resolves contention between tasks of one flight.
+
+        Falls back to the legacy (priority_group, urgency) sort if STD or
+        flight_id are missing from the schema.
+        """
+        if "STD" in df.columns and "flight_id" in df.columns:
+            return df.sort_values(
+                by=["STD", "flight_id", "priority_group", "urgency"],
+                ascending=[True, True, True, True],
+                ignore_index=True,
+            )
         return df.sort_values(
             by=["priority_group", "urgency"],
             ascending=[True, True],
@@ -196,10 +286,15 @@ class Optimizer:
         self,
         stand_id: str,
         candidate_start: datetime,
-        stand_last_end: dict,
+        stand_last: dict,
+        current_flight_id: str | None = None,
     ) -> datetime:
-        last_end = stand_last_end.get(stand_id)
-        if last_end is None:
+        entry = stand_last.get(stand_id)
+        if entry is None:
+            return candidate_start
+        last_end, last_flight_id = entry
+        # Same flight on the stand: no safe_interval between its own tasks
+        if current_flight_id is not None and last_flight_id == current_flight_id:
             return candidate_start
         earliest_allowed = last_end + timedelta(minutes=self.safe_interval_min)
         return max(candidate_start, earliest_allowed)
@@ -212,7 +307,7 @@ class Optimizer:
         self,
         sorted_df: pd.DataFrame,
         v_state: dict,
-        stand_last_end: dict,
+        stand_last: dict,
     ) -> tuple[list, list]:
         assigned_routes: list[dict] = []
         violations: list[dict] = []
@@ -224,6 +319,7 @@ class Optimizer:
             earliest_start: datetime = task["earliest_start"]
             std: datetime = task["STD"]
             svc_time: float = task["service_time_pred"]
+            flight_id = task.get("flight_id") if "flight_id" in sorted_df.columns else None
 
             # Filter candidates by vehicle type
             candidates = [
@@ -254,7 +350,7 @@ class Optimizer:
                 raw_start = vs["free_at"] + timedelta(minutes=travel_time_min)
                 actual_start = max(raw_start, earliest_start)
                 actual_start = self._enforce_safe_interval(
-                    stand_id, actual_start, stand_last_end
+                    stand_id, actual_start, stand_last, current_flight_id=flight_id
                 )
                 end_time = actual_start + timedelta(minutes=svc_time)
                 feasible = end_time <= std
@@ -290,10 +386,10 @@ class Optimizer:
             v_state[best_vid]["free_at"] = best_end_time
             v_state[best_vid]["current_pos"] = stand_id
 
-            # Update stand safe-interval tracker
-            prev = stand_last_end.get(stand_id)
-            if prev is None or best_end_time > prev:
-                stand_last_end[stand_id] = best_end_time
+            # Update stand safe-interval tracker (end_time, flight_id)
+            prev = stand_last.get(stand_id)
+            if prev is None or best_end_time > prev[0]:
+                stand_last[stand_id] = (best_end_time, flight_id)
 
         return assigned_routes, violations
 
