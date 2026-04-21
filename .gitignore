@@ -28,7 +28,6 @@ __pycache__/
 
 # Defense / working drafts — not part of the delivered repo
 defense_report.docx
-defense_report_ru.docx
 charts_deprecated/
 model_params/
 create_code_review.md
